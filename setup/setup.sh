@@ -17,26 +17,24 @@ apt-get -y install python-pyasn1
 echo "[*] Installing dnspython"
 apt-get -y install python-dnspython
 echo "[*] Installing impacket"
-wget https://pypi.python.org/packages/source/i/impacket/impacket-0.9.13.tar.gz
-tar -xvf impacket-0.9.13.tar.gz
-cd impacket-0.9.13
-python setup.py install
-cd ..
-rm -rf impacket-0.9.13
+pip install impacket
 echo "[*] Installing pyftpdlib..."
 git clone https://github.com/giampaolo/pyftpdlib.git
 cd pyftpdlib
 python setup.py install
 cd ..
 rm -rf pyftpdlib
-echo "[*] Installing cryptography v2.2.2"
-pip install cryptography==2.2.2
+echo "[*] Installing cryptography"
+pip install cryptography
 echo "[*] Installing dnslib"
 pip install dnslib
 cd ../protocols/servers/serverlibs/web
 clear
-echo "[*] Generating SSL Certificate"
-openssl req -new -x509 -keyout server.pem -out server.pem -days 365 -nodes
+echo "[*] Generating SSL Certificate (web)"
+openssl req -new -x509 -keyout server.key -out server.crt -days 365 -nodes -newkey rsa:4096 -batch && cat server.key server.crt > server.pem && rm server.key server.crt
+cd ../sftp
+echo "[*] Generating SSL Key (sftp)"
+ssh-keygen -b 4096 -f server.key -N ""
 echo
 echo
 echo "[*] Install complete!"

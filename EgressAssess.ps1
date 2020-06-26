@@ -2011,7 +2011,9 @@ function Invoke-EgressAssess
         
         function Use-DNSTXT
         {
-        Param([bool]$txtmode=$true);
+            Param([bool]$txtmode=$true);
+            $success_count = 0
+            $fail_count = 0
             if ($Datatype -contains "ssn" -or "cc" -or "identity")
             {
                 $filetransfer = $false
@@ -2144,12 +2146,25 @@ function Invoke-EgressAssess
                             $EncodedData += "`n"
                             if (($PacketNumber % $PacketsToSend -eq 0) -or ($PacketNumber -eq $TotalPackets))
                             {
-                               $EncodedData = $EncodedData.SubString(0, $EncodedData.Length-1)
+                                Write-Verbose "[*] Sending burst data (up to $PacketsToSend) .... $PacketNumber/$TotalPackets"
 
-                               Send-DNSPacket $EncodedData $txtmode
-                               $EncodedData=""
-                               Write-Verbose "[*] Sending burst data (up to $PacketsToSend) .... $PacketNumber/$TotalPackets"
-                               Start-Sleep -Milliseconds 10
+                                $EncodedData = $EncodedData.SubString(0, $EncodedData.Length-1)
+                                $response = Send-DNSPacket $EncodedData $txtmode
+                                if (($response -eq $null) -or ($response.Count -eq 0))
+                                {
+                                    $fail_count += 1
+                                    if (($success_count -eq 0) -and ($fail_count -eq 3))
+                                    {
+                                        Write-Verbose "[!] Aborting due to errors"
+                                        break
+                                    }
+                                }
+                                else
+                                {
+                                    $success_count += 1
+                                }
+                                $EncodedData=""
+                                Start-Sleep -Milliseconds 10
                             }
                             $PacketNumber += 1
                             if ($PacketNumber -gt $TotalPackets) { break}
@@ -2209,7 +2224,23 @@ function Invoke-EgressAssess
                     Write-Verbose $ErrorMessage
                     Break
                 }
-                Write-Verbose "[*] Transfer complete!"
+                $total_count = $success_count + $fail_count
+                if ($fail_count -eq 0)
+                {
+                    Write-Verbose "[*] Transfer complete!"
+                }
+                elseif ($success_count -eq 0)
+                {
+                    Write-Verbose "[*] Transfer failed!"
+                }
+                elseif ($fail_count -lt $success_count)
+                {
+                    Write-Verbose "[*] Transfer mostly succeeded! $success_count/$total_count"
+                }
+                else
+                {
+                    Write-Verbose "[*] Transfer mostly failed! $success_count/$total_count"
+                }
                 $loops--
                 Write-Verbose "[*] $loops loops remaining.."
             }
@@ -2402,50 +2433,50 @@ function Invoke-EgressAssess
             {
                 try
                 {
-                $Saddrf = [System.Net.Sockets.AddressFamily]::InterNetwork
-                $Stype = [System.Net.Sockets.SocketType]::Dgram
-                $Ptype = [System.Net.Sockets.ProtocolType]::UDP
-           
-                $addr = [System.Net.IPAddress]::Parse($addr.Trim())
+                    $Saddrf = [System.Net.Sockets.AddressFamily]::InterNetwork
+                    $Stype = [System.Net.Sockets.SocketType]::Dgram
+                    $Ptype = [System.Net.Sockets.ProtocolType]::UDP
 
-                $End = New-Object System.Net.IPEndPoint $addr, $Port;
-                $Sock = New-Object System.Net.Sockets.Socket $Saddrf, $Stype, $Ptype;
-        	    $Sock.TTL = 26
-                $Sock.ReceiveTimeout=3000
+                    $addr = [System.Net.IPAddress]::Parse($addr.Trim())
 
-                [Byte[]]$fullQ = @()
-                
-                foreach ($qq in $queries)
-                {
-                    $data2 = $qq.Split('.') #$dataX.Split('.')
-                    foreach ($d2 in $data2)
+                    $End = New-Object System.Net.IPEndPoint $addr, $Port;
+                    $Sock = New-Object System.Net.Sockets.Socket $Saddrf, $Stype, $Ptype;
+                    $Sock.TTL = 26
+                    $Sock.ReceiveTimeout=3000
+
+                    [Byte[]]$fullQ = @()
+
+                    foreach ($qq in $queries)
                     {
-                        $data1 = [System.Text.Encoding]::ASCII.GetBytes($d2)
-                        $len1 = [bitconverter]::GetBytes($data1.Length)
-                        $len1 = @($len1[0])
-                        $fullQ+= $len1
-                        $fullQ+=$data1 
-                    }
-                   
-                    $fullQ+=$postS
-                }
-                $Buffer = $Mess + $fullQ
+                        $data2 = $qq.Split('.') #$dataX.Split('.')
+                        foreach ($d2 in $data2)
+                        {
+                            $data1 = [System.Text.Encoding]::ASCII.GetBytes($d2)
+                            $len1 = [bitconverter]::GetBytes($data1.Length)
+                            $len1 = @($len1[0])
+                            $fullQ+= $len1
+                            $fullQ+=$data1
+                        }
 
-                $Sock.ReceiveTimeout=1000
-                $Sock.Connect($End)
-                $Sock.Send($Buffer) | out-null
-                if ($dataX.Contains("ENDTHISFILETRANSMISSIONEGRESSASSESS"))
-                {
+                        $fullQ+=$postS
+                    }
+                    $Buffer = $Mess + $fullQ
+
+                    $Sock.Connect($End)
+                    $Sock.Send($Buffer) | out-null
+
                     [byte[]] $resp = New-Object byte[] 1024
-                    start-sleep 1
-                    $Sock.Receive($resp)
+                    $numread = $Sock.Receive($resp)
                     $Sock.Close()
+
+                    #Write-Verbose "Received $numread bytes"
+                    if (($numread -lt 4) -or ($resp[3] % 2 -eq 1))
+                    {
+                        Write-Verbose "[!] Received short packet or error flag"
+                        return $null
+                    }
+
                     return $resp
-                }
-                else
-                {
-                    return $null
-                }
                 }
                 catch
                 {
@@ -2460,6 +2491,7 @@ function Invoke-EgressAssess
                         Write-Verbose "[*] Error, DNS failed with error:"
                         Write-Verbose $ErrorMessage
                     }
+                    return $null
                 }
             }
         }
